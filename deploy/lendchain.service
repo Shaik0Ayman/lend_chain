@@ -1,0 +1,18 @@
+[Unit]
+Description=LendChain (Hyperledger Fabric network + platform, bank and auditor services)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/lendchain.sh start
+ExecStop=__DIR__/lendchain.sh stop
+TimeoutStartSec=900
+TimeoutStopSec=120
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

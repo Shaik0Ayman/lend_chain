@@ -1,0 +1,10 @@
+[Unit]
+Description=LendChain self-heal every 3 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=3min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

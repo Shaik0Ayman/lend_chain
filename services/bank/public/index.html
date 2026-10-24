@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trustee Bank Console</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/shared/lc.css"></head>
+<body>
+<header class="top"><h1>Trustee Bank Console <small>mock bank-promoted trustee · simulated money</small></h1>
+  <div class="row"><span class="pill mut">sim date</span><strong id="date" class="mono"></strong>
+  <button onclick="adv(1)">+1 day</button><button onclick="adv(7)">+7</button><button class="pri" onclick="adv(30)">+30 days</button><button onclick="adv(95)">+95</button></div></header>
+<main>
+  <div class="note">This service stands in for the escrow bank. It is the only component that moves rupees; after each movement it records the fact on the Fabric ledger under the TrusteeMSP identity with its own UTR. Autopay collects an EMI only when the borrower’s account holds enough — top up (or don’t) to demo repayment or default.</div>
+  <div class="grid g4" id="stats"></div>
+  <div class="grid g2">
+    <div class="card"><h2>Simulation settings</h2>
+      <div class="row"><div style="flex:1"><label>Lender payout delay after EMI (days)</label><select id="pd"><option value="0">0 — same day</option><option value="1">1 — T+1 (limit)</option><option value="2">2 — breaches T+1</option></select></div>
+      <div style="flex:1"><label>Disbursal delay after funding (days)</label><select id="dd"><option value="0">0 — same day</option><option value="1">1 — T+1 (limit)</option><option value="3">3 — breaches T+1</option></select></div></div>
+      <div class="row" style="margin-top:.7rem"><label style="margin:0"><input type="checkbox" id="auto" style="width:auto"> background processing every 3 s</label><button onclick="saveCfg()">Save</button><button onclick="proc()">Process now</button></div></div>
+    <div class="card"><h2>Top up an account (demo only)</h2>
+      <div class="row"><div style="flex:2"><label>Account owner (participant id)</label><input id="tuo" placeholder="BRW-…"></div><div style="flex:1"><label>Amount ₹</label><input id="tua" type="number" value="20000"></div></div>
+      <div class="row" style="margin-top:.7rem"><button class="pri" onclick="topup()">Credit account</button></div></div>
+  </div>
+  <div class="card"><h2>Accounts</h2><div class="scroll"><table id="acc"></table></div></div>
+  <div class="grid g2">
+    <div class="card"><h2>Lenders’ escrow ageing (must leave within T+1)</h2><div id="esc"></div></div>
+    <div class="card"><h2>Autopay bounces</h2><div id="bounce"></div></div>
+  </div>
+  <div class="card"><h2>Ledger — latest 60 <span id="outbox"></span></h2><div class="scroll"><table id="led"></table></div></div>
+</main>
+<script src="/shared/lc.js"></script>
+<script>
+let KEY = store('bankKey') || prompt('Bank API key (default: dev-bank-key)') || 'dev-bank-key'; store('bankKey', KEY);
+const api = async (p, body) => { const r = await fetch(p, { method: body ? 'POST' : 'GET', headers: { 'x-api-key': KEY, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json(); if (!r.ok) { if (r.status === 401) store('bankKey', null); throw new Error(j.error); } return j; };
+async function load() {
+  const d = await api('/api/console');
+  $('#date').textContent = d.simDate;
+  $('#pd').value = d.config.payoutDelayDays; $('#dd').value = d.config.disburseDelayDays; if (document.activeElement !== $('#auto')) $('#auto').checked = d.config.autoProcess;
+  const bal = (id) => (d.accounts.find((a) => a.id === id) || {}).balance || 0;
+  $('#stats').innerHTML = [['Lenders’ escrow', bal('ESCROW-LENDERS')], ['Borrowers’ escrow', bal('ESCROW-BORROWERS')]].map(([k, v]) => `<div class="card"><div class="stat">${inr(v)}<small>${k}</small></div></div>`).join('')
+    + `<div class="card"><div class="stat">${d.accounts.filter((a) => a.kind === 'LENDER').length} / ${d.accounts.filter((a) => a.kind === 'BORROWER').length}<small>lender / borrower accounts</small></div></div>`
+    + `<div class="card"><div class="stat" style="color:${d.outboxPending ? 'var(--warn)' : 'var(--ok)'}">${d.outboxPending}<small>transfers awaiting ledger record</small></div></div>`;
+  $('#acc').innerHTML = '<tr><th>Account</th><th>Owner</th><th>Type</th><th>IFSC</th><th class="n">Balance</th></tr>' + d.accounts.map((a) => `<tr><td class="mono">${a.id}</td><td class="mono">${esc(a.owner)}</td><td>${a.kind}</td><td class="mono">${esc(a.ifsc || '')}</td><td class="n">${inr(a.balance)}</td></tr>`).join('');
+  $('#esc').innerHTML = d.lendersEscrow.length ? '<table><tr><th>Loan</th><th class="n">Held</th><th>Since</th><th class="n">Age</th></tr>' + d.lendersEscrow.map((e) => `<tr><td class="mono">${esc(e.loanId)}</td><td class="n">${inr(e.heldPaise)}</td><td>${e.since}</td><td class="n"><span class="pill ${e.ageDays > 1 ? 'bad' : 'ok'}">${e.ageDays}d</span></td></tr>`).join('') + '</table>' : '<span class="mut small">No funds sitting in lenders’ escrow.</span>';
+  $('#bounce').innerHTML = d.bounces.length ? '<table><tr><th>Loan</th><th class="n">EMI</th><th>First failed</th><th>Why</th></tr>' + d.bounces.map((b) => `<tr><td class="mono">${esc(b.loan_id)}</td><td class="n">#${b.installment}</td><td>${b.date}</td><td class="small mut">${esc(b.detail)}</td></tr>`).join('') + '</table>' : '<span class="mut small">None.</span>';
+  $('#outbox').innerHTML = d.outboxPending ? `<span class="pill warn">${d.outboxPending} pending on-chain</span>` : '';
+  $('#led').innerHTML = '<tr><th>UTR</th><th>Date</th><th>Kind</th><th>From → To</th><th class="n">Amount</th><th>Loan</th><th>On ledger</th></tr>' + d.txns.map((t) => `<tr><td class="mono">${t.utr}</td><td>${t.value_date}</td><td>${t.kind}</td><td class="small">${esc(t.from_acc)} → ${esc(t.to_acc)}</td><td class="n">${inr(t.amount)}</td><td class="mono">${esc(t.loan_id || '')}</td><td>${t.recorded ? (t.chain_tx ? `<span class="pill ok" title="${t.chain_tx}">✓ ${t.chain_tx.slice(0, 8)}</span>` : '<span class="pill mut">n/a</span>') : `<span class="pill warn" title="${esc(t.last_error || '')}">pending</span>`}</td></tr>`).join('');
+}
+async function adv(n) { try { toast(`Advancing ${n} day(s)…`); await api('/sim/advance', { days: n }); await load(); toast('Done'); } catch (e) { toast(e.message, 1); } }
+async function proc() { try { await api('/sim/process', {}); await load(); } catch (e) { toast(e.message, 1); } }
+async function saveCfg() { try { await api('/sim/config', { payoutDelayDays: +$('#pd').value, disburseDelayDays: +$('#dd').value, autoProcess: $('#auto').checked }); toast('Saved'); } catch (e) { toast(e.message, 1); } }
+async function topup() { try { await api('/api/demo/topup', { owner: $('#tuo').value.trim(), amountPaise: Math.round(+$('#tua').value * 100) }); toast('Credited'); load(); } catch (e) { toast(e.message, 1); } }
+load().catch((e) => toast(e.message, 1)); setInterval(() => load().catch(() => {}), 4000);
+</script></body></html>

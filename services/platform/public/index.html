@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LendChain</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/shared/lc.css">
+<style>
+ .brand{display:flex;align-items:center;gap:.55rem;font-weight:700;font-size:1.15rem}.brand i{width:26px;height:26px;border-radius:7px;background:var(--acc);display:inline-block;position:relative}
+ .brand i:after{content:"";position:absolute;inset:7px;border:2px solid var(--acc-ink);border-radius:3px}
+ .auth{max-width:560px;margin:2rem auto}.seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}.seg button{flex:1;border:0;border-radius:0;background:var(--card)}.seg button.on{background:var(--acc);color:var(--acc-ink)}
+ .two{display:grid;grid-template-columns:1fr 1fr;gap:.2rem .8rem}.three{display:grid;grid-template-columns:repeat(3,1fr);gap:.2rem .8rem}@media(max-width:640px){.two,.three{grid-template-columns:1fr}}
+ .grade{display:inline-flex;width:2rem;height:2rem;border-radius:8px;align-items:center;justify-content:center;font-weight:750;color:#fff}.gA{background:#15803d}.gB{background:#4d9a2b}.gC{background:#b45309}.gD{background:#c2410c}.gE{background:#b91c1c}
+ .loan{border:1px solid var(--line);border-radius:10px;padding:.8rem .9rem;display:grid;gap:.5rem}.loan.sel{border-color:var(--acc)}
+ .tl{display:grid;gap:.35rem;border-left:2px solid var(--line);padding-left:.8rem;margin-left:.3rem}.tl div{font-size:.84rem;position:relative}.tl div:before{content:"";position:absolute;left:-1.05rem;top:.45rem;width:8px;height:8px;border-radius:50%;background:var(--acc)}
+ pre.doc{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.8rem;font-size:.78rem;max-height:300px;overflow:auto}
+ .reasons li{font-size:.84rem;margin:.15rem 0}.up{color:var(--bad)}.down{color:var(--ok)}
+ details>summary{cursor:pointer;color:var(--acc);font-weight:600;font-size:.86rem}
+ .hide{display:none!important}
+</style></head>
+<body>
+<header class="top"><div class="brand"><i></i>LendChain <small class="mut" style="font-weight:400;font-size:.8rem">P2P lending · Hyperledger Fabric</small></div>
+  <div class="row"><span class="pill mut" id="sim" title="simulated bank date"></span><span id="who" class="small"></span><button id="logout" class="hide" onclick="logout()">Sign out</button></div></header>
+<main id="app"></main>
+<script src="/shared/lc.js"></script>
+<script>
+const S = { token: store('lcToken'), me: null, cfg: {}, tab: null, sel: null, timer: null, assessment: null };
+const DEV = store('lcDev') || (store('lcDev', 'dev-' + Math.random().toString(36).slice(2, 10)), store('lcDev'));
+async function api(method, path, body) {
+  const r = await fetch(path, { method, headers: { 'content-type': 'application/json', 'x-device-id': DEV, ...(S.token ? { authorization: 'Bearer ' + S.token } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && S.token) { logout(true); throw new Error('Session expired'); }
+  if (!r.ok) { const e = new Error(j.error || r.statusText); e.body = j; throw e; }
+  return j;
+}
+const act = (fn, ok) => async (...a) => { try { const r = await fn(...a); if (ok) toast(typeof ok === 'function' ? ok(r) : ok); await render(); return r; } catch (e) { toast(e.message, true); await render(); } };
+function logout(silent) { S.token = null; S.me = null; store('lcToken', null); clearInterval(S.timer); if (!silent) toast('Signed out'); boot(); }
+const purposeLabel = (p) => p.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
+const grade = (g) => `<span class="grade g${g}" title="Risk grade ${g}">${g}</span>`;
+
+// ------------------------------------------------------------------ auth
+function authView() {
+  $('#app').innerHTML = `<div class="card auth"><h2>Welcome</h2>
+  <div class="seg" style="margin-bottom:1rem"><button id="t-in" class="on" onclick="authTab('in')">Sign in</button><button id="t-up" onclick="authTab('up')">Create account</button></div>
+  <div id="in"><label>Email</label><input id="li-e" type="email" autocomplete="username"><label>Password</label><input id="li-p" type="password" autocomplete="current-password">
+    <div class="row" style="margin-top:1rem"><button class="pri" onclick="doLogin()">Sign in</button><span class="mut small">Operator demo: admin@lendchain.local / admin12345</span></div></div>
+  <div id="up" class="hide">
+    <div class="seg"><button id="r-B" class="on" onclick="setRole('BORROWER')">I want to borrow</button><button id="r-L" onclick="setRole('LENDER')">I want to lend</button></div>
+    <div class="two"><div><label>Full name</label><input id="su-n"></div><div><label>Mobile</label><input id="su-ph" inputmode="numeric"></div></div>
+    <div class="two"><div><label>Email</label><input id="su-e" type="email"></div><div><label>Password (8+)</label><input id="su-p" type="password"></div></div>
+    <div class="two"><div><label>PAN</label><input id="su-pan" style="text-transform:uppercase"></div><div><label>Aadhaar</label><input id="su-aa" inputmode="numeric"></div></div>
+    <div class="three"><div><label>Bank IFSC</label><input id="su-ifsc" style="text-transform:uppercase"></div><div style="grid-column:span 2"><label>Bank account number</label><input id="su-ac" inputmode="numeric"></div></div>
+    <div id="bfields"><div class="three"><div><label>Monthly income ₹</label><input id="su-inc" type="number" value="80000"></div><div><label>Existing EMIs ₹/mo</label><input id="su-emi" type="number" value="0"></div>
+      <div><label>Employment</label><select id="su-emp"><option>SALARIED</option><option>SELF_EMPLOYED</option><option>BUSINESS</option></select></div></div>
+      <div id="demoBureau"><label>Demo only: override bureau score (300–900, blank = derived from PAN)</label><input id="su-bs" type="number" placeholder="e.g. 740"></div></div>
+    <div id="lfields" class="hide"><label style="display:flex;gap:.5rem;align-items:flex-start;font-weight:400;font-size:.85rem"><input type="checkbox" id="su-decl" style="width:auto;margin-top:.25rem"> I understand I can lose my entire principal. LendChain guarantees nothing, offers no assured returns and no early exit.</label></div>
+    <label style="display:flex;gap:.5rem;align-items:flex-start;font-weight:400;font-size:.85rem"><input type="checkbox" id="su-con" style="width:auto;margin-top:.25rem"> I consent to e-KYC and a credit-report pull.</label>
+    <div class="two"><div><label>Aadhaar OTP <span id="otpHint" class="mut"></span></label><input id="su-otp" inputmode="numeric"></div><div style="align-self:end"><button onclick="fillDemo()" id="demoBtn" class="hide">Fill demo identity</button></div></div>
+    <div class="row" style="margin-top:1rem"><button class="pri" onclick="doSignup()">Verify &amp; create account</button></div>
+    <p class="mut small">e-KYC is simulated: PAN and Aadhaar are validated by format and checksum only. Your name and documents are stored encrypted off-chain; the ledger only receives a pseudonymous ID.</p></div></div>`;
+  S.role = 'BORROWER';
+  if (S.cfg.demo) { $('#demoBtn').classList.remove('hide'); $('#otpHint').textContent = '(demo: ' + S.cfg.otpHint + ')'; }
+}
+function authTab(t) { $('#in').classList.toggle('hide', t !== 'in'); $('#up').classList.toggle('hide', t !== 'up'); $('#t-in').classList.toggle('on', t === 'in'); $('#t-up').classList.toggle('on', t === 'up'); }
+function setRole(r) { S.role = r; $('#r-B').classList.toggle('on', r === 'BORROWER'); $('#r-L').classList.toggle('on', r === 'LENDER'); $('#bfields').classList.toggle('hide', r !== 'BORROWER'); $('#lfields').classList.toggle('hide', r !== 'LENDER'); }
+async function fillDemo() { const d = await api('GET', '/api/demo/identity'); $('#su-pan').value = d.pan; $('#su-aa').value = d.aadhaar; $('#su-ph').value = d.phone; $('#su-ifsc').value = d.ifsc; $('#su-ac').value = d.accountNumber; $('#su-otp').value = S.cfg.otpHint; if (!$('#su-n').value) $('#su-n').value = 'Demo ' + (S.role === 'LENDER' ? 'Lender' : 'Borrower'); if (!$('#su-e').value) $('#su-e').value = `demo${Date.now() % 100000}@example.test`; if (!$('#su-p').value) $('#su-p').value = 'password123'; $('#su-con').checked = true; if (S.role === 'LENDER') $('#su-decl').checked = true; }
+async function enter(j) { S.token = j.token; store('lcToken', j.token); await boot(); }
+async function doLogin() { try { await enter(await api('POST', '/api/login', { email: $('#li-e').value, password: $('#li-p').value })); } catch (e) { toast(e.message, true); } }
+async function doSignup() {
+  const b = { role: S.role, name: $('#su-n').value, email: $('#su-e').value, password: $('#su-p').value, phone: $('#su-ph').value, pan: $('#su-pan').value, aadhaar: $('#su-aa').value, ifsc: $('#su-ifsc').value, accountNumber: $('#su-ac').value, otp: $('#su-otp').value, consentCreditPull: $('#su-con').checked };
+  if (S.role === 'BORROWER') Object.assign(b, { monthlyIncomeRs: +$('#su-inc').value, existingEmiRs: +$('#su-emi').value, employment: $('#su-emp').value, bureauScoreOverride: $('#su-bs').value ? +$('#su-bs').value : undefined });
+  else b.riskDeclaration = $('#su-decl').checked;
+  try { await enter(await api('POST', '/api/signup', b)); toast('Account verified and registered on the ledger'); } catch (e) { toast(e.message, true); }
+}
+
+// ------------------------------------------------------------------ shared pieces
+function timeline(h) { return `<div class="tl">${h.map((e) => `<div><strong>${e.to}</strong> <span class="mut">${(e.at || '').replace('T', ' ').slice(0, 19)} · ${esc(e.msp)}</span><br><span class="mut mono" title="${e.txId}">tx ${e.txId.slice(0, 14)}…</span> ${esc(e.note)}</div>`).join('')}</div>`; }
+function scheduleTable(s) {
+  return `<div class="scroll" style="max-height:300px"><table><tr><th>#</th><th>Due</th><th class="n">EMI</th><th class="n">Interest</th><th class="n">Principal</th><th></th></tr>` +
+    s.map((r) => `<tr><td>${r.no}</td><td>${r.dueDate}</td><td class="n">${inr(r.emiPaise)}</td><td class="n">${inr(r.interestPaise)}</td><td class="n">${inr(r.principalPaise)}</td><td>${r.status === 'PAID' ? '<span class="pill ok">paid</span>' : r.status === 'PARTIAL' ? '<span class="pill warn">partial</span>' : ''}</td></tr>`).join('') + '</table></div>';
+}
+function reasonsList(rs) { return `<ul class="reasons" style="margin:.3rem 0 0;padding-left:1.1rem">${rs.map((r) => `<li><span class="${r.direction === 'raises risk' ? 'up' : r.direction === 'lowers risk' ? 'down' : 'mut'}">${r.direction === 'raises risk' ? '▲' : r.direction === 'lowers risk' ? '▼' : '•'}</span> ${esc(r.factor)}: <strong>${esc(r.value)}</strong> <span class="mut">(${r.direction})</span></li>`).join('')}</ul>`; }
+const svcLink = (key, port, label) => { const L = (S.cfg && S.cfg.links) || { local: true }; const cs = location.hostname.match(/^(.*)-\d+\.app\.github\.dev$/); const href = cs ? `https://${cs[1]}-${port}.app.github.dev` : L.local ? `${location.protocol}//${location.hostname}:${port}` : L[key]; return href ? `<a href="${href}" target="_blank" rel="noopener">${label}</a>` : label; };
+const demoBar = () => S.cfg.demo ? `<div class="note warn small">Demo mode: money is simulated. <button onclick="addFunds()">+ ₹50,000 to my account</button> <button onclick="spendAll()">Spend all my money</button> · Move the clock in the ${svcLink('bank', 4002, 'bank console')}.</div>` : '';
+const addFunds = act(() => api('POST', '/api/demo/add-funds', { amountRs: 50000 }), 'Added ₹50,000 to your bank account');
+const spendAll = act(() => api('POST', '/api/demo/spend', {}), 'Balance spent');
+
+// ------------------------------------------------------------------ borrower
+async function borrowerView() {
+  const [{ loans, offChain }] = await Promise.all([api('GET', '/api/loans/mine')]);
+  const active = loans.filter((l) => ['DISBURSED', 'REPAYING', 'NPA'].includes(l.status));
+  const next = active.flatMap((l) => l.schedule.filter((r) => r.status !== 'PAID').slice(0, 1).map((r) => ({ ...r, loanId: l.id }))).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1))[0];
+  const A = S.assessment;
+  $('#app').innerHTML = `${demoBar()}
+  <div class="grid g4"><div class="card"><div class="stat">${S.me.balancePaise == null ? '—' : inr(S.me.balancePaise)}<small>bank balance (autopay account)</small></div></div>
+   <div class="card"><div class="stat">${active.length}<small>active loans</small></div></div>
+   <div class="card"><div class="stat">${next ? inr(next.emiPaise) : '—'}<small>${next ? `next EMI · ${next.dueDate}` : 'no EMI due'}</small></div></div>
+   <div class="card"><div class="stat">${S.me.bureauScore}<small>bureau score (mock)</small></div></div></div>
+  <div class="grid g2">
+   <div class="card"><h2>Request a loan</h2>
+     <div class="two"><div><label>Amount ₹ (min 5,000)</label><input id="ln-a" type="number" value="150000"></div><div><label>Tenure (months, max 36)</label><input id="ln-t" type="number" value="12"></div></div>
+     <div class="two"><div><label>Purpose</label><select id="ln-p">${S.cfg.purposes.map((p) => `<option value="${p}">${purposeLabel(p)}</option>`).join('')}</select></div><div><label>Highest APR you will accept %</label><input id="ln-m" type="number" value="16"></div></div>
+     <div class="row" style="margin-top:.9rem"><button class="pri" onclick="reqLoan()">Request loan</button></div>
+     <p class="mut small">Lenders pick you by name, choose their own lowest rate and the cheapest bids fill first. Everyone accepted earns one clearing rate, so you get one APR and one EMI.</p></div>
+   <div class="card"><h2>Latest credit assessment</h2>${A ? `<div class="row">${grade(A.grade)}<div><strong>PD ${(A.pd * 100).toFixed(1)}%</strong><div class="mut small">${esc(A.modelVersion)}</div></div></div>
+      <div class="note" style="margin:.6rem 0">Suggested APR band (advice only): <strong>${pct(A.suggestedAprBand.lowBps)} – ${pct(A.suggestedAprBand.highBps)}</strong></div>${reasonsList(A.reasons)}
+      ${A.fraudFlags && A.fraudFlags.length ? `<p class="small up">Held for review: ${A.fraudFlags.map((f) => esc(f.rule)).join(', ')}</p>` : ''}` : '<p class="mut">Request a loan to see your grade, suggested APR band and the reasons behind them.</p>'}</div></div>
+  ${offChain.length ? `<div class="card"><h2>Not listed</h2><table>${offChain.map((o) => `<tr><td class="mono">${o.id}</td><td>${inr(o.amountPaise, 0)}</td><td>${pill(o.status)}</td><td class="mut small">${esc(o.note || '')}</td></tr>`).join('')}</table></div>` : ''}
+  <div class="card"><h2>My loans</h2>${loans.length ? loans.map((l) => loanRow(l)).join('') : '<span class="mut">No loans yet.</span>'}</div><div id="detail"></div>`;
+  if (S.sel) loanDetail(S.sel);
+}
+function loanRow(l) {
+  const paid = l.schedule.filter((r) => r.status === 'PAID').length;
+  return `<div class="loan ${S.sel === l.id ? 'sel' : ''}"><div class="row" style="justify-content:space-between"><div class="row">${grade(l.riskGrade)}<strong>${inr(l.amountPaise, 0)}</strong><span class="mut">${l.tenureMonths}m · ${purposeLabel(l.purposeCode)}</span> ${pill(l.status)}${l.dpd ? `<span class="pill bad">${l.dpd} DPD</span>` : ''}</div><div class="row"><span class="mono mut small">${l.id}</span><button onclick="S.sel='${l.id}';render()">Open</button></div></div>
+   <div class="small mut">${l.clearingAprBps ? `APR ${pct(l.clearingAprBps)} · EMI ${inr(l.emiPaise)}` : `up to ${pct(l.maxAprBps)}`}${l.schedule.length ? ` · ${paid}/${l.schedule.length} EMIs paid` : ''}</div>${l.schedule.length ? `<div class="bar"><i style="width:${(paid / l.schedule.length) * 100}%"></i></div>` : ''}</div>`;
+}
+const reqLoan = act(async () => {
+  try { const r = await api('POST', '/api/loans', { amountRs: +$('#ln-a').value, tenureMonths: +$('#ln-t').value, purposeCode: $('#ln-p').value, maxAprPct: +$('#ln-m').value }); S.assessment = r.assessment; S.sel = r.loanId; return r; }
+  catch (e) { if (e.body && e.body.assessment) S.assessment = e.body.assessment; throw e; }
+}, (r) => r.status === 'LISTED' ? 'Listed — lenders can now bid' : 'Held for manual review');
+
+// ------------------------------------------------------------------ loan detail (shared)
+async function loanDetail(id) {
+  let l; try { l = await api('GET', '/api/loans/' + id); } catch (e) { return; }
+  const isB = S.me.role === 'BORROWER', isL = S.me.role === 'LENDER', isA = S.me.role === 'ADMIN';
+  const mySig = (l.signatures || []).some((s) => s.you);
+  const myAlloc = isL ? l.allocations[0] : null;
+  const funded = isL && l.escrow && Object.values(l.escrow).some((e) => !e.refundedOn);
+  let actions = '';
+  if (l.status === 'COMMITTED' && !isA) actions += mySig ? '<span class="pill ok">you signed</span>' : `<div class="row"><input id="otp" placeholder="e-sign OTP (demo ${S.cfg.otpHint})" style="max-width:220px"><button class="pri" onclick="sign('${l.id}')">E-sign agreement</button></div>`;
+  if (l.status === 'SIGNED' && isL && myAlloc && !funded) actions += `<button class="pri" onclick="fund('${l.id}')">Pay ${inr(myAlloc.amountPaise)} into escrow</button>`;
+  if (l.status === 'SIGNED' && isL && funded) actions += '<span class="pill ok">funded — awaiting disbursal</span>';
+  if (isB && ['LISTED', 'FUNDING'].includes(l.status) && l.demandPaise > 0 && l.demandPaise < l.amountPaise) actions += `<button onclick="consent('${l.id}')">Accept a smaller loan if bids fall short</button>`;
+  if (isB && ['LISTED', 'FUNDING', 'COMMITTED', 'SIGNED'].includes(l.status)) actions += `<button class="dng" onclick="cancelLoan('${l.id}')">Cancel</button>`;
+  const info = l.info || {};
+  $('#detail').innerHTML = `<div class="card"><h2>Loan ${l.id} ${pill(l.status)}</h2>
+   <div class="grid g3"><dl class="kv"><dt>Amount</dt><dd>${inr(l.amountPaise)}${l.requestedPaise !== l.amountPaise ? ` <span class="mut">(asked ${inr(l.requestedPaise, 0)})</span>` : ''}</dd><dt>Tenure</dt><dd>${l.tenureMonths} months</dd><dt>Purpose</dt><dd>${purposeLabel(l.purposeCode)}</dd><dt>Max APR</dt><dd>${pct(l.maxAprBps)}</dd><dt>Clearing APR</dt><dd>${l.clearingAprBps ? pct(l.clearingAprBps) : '—'}</dd><dt>EMI</dt><dd>${l.emiPaise ? inr(l.emiPaise) : '—'}</dd></dl>
+   <dl class="kv"><dt>Risk grade</dt><dd>${grade(l.riskGrade)}</dd><dt>Suggested band</dt><dd>${pct(l.suggestedAprBand.lowBps)}–${pct(l.suggestedAprBand.highBps)}</dd><dt>Open bids</dt><dd>${l.bidCount} · ${inr(l.demandPaise, 0)}</dd><dt>Bidding closes</dt><dd>${l.biddingClosesOn}</dd><dt>Days past due</dt><dd>${l.dpd}</dd>${l.agreement ? `<dt>Agreement hash</dt><dd class="mono" title="${l.agreement.hash}">${l.agreement.hash.slice(0, 14)}… ${l.agreement.onChainHash ? '<span class="pill ok">on-chain ✓</span>' : '<span class="pill warn">not yet anchored</span>'}</dd>` : ''}</dl>
+   <div>${info.borrower && !isB ? `<p class="small"><strong>${esc(info.borrower.name)}</strong> · ${esc(info.borrower.employment)} · ${esc(info.borrower.incomeBand)} · bureau ${info.borrower.bureauScore}</p>` : ''}${info.reasons ? `<div class="small mut">Why this grade</div>${reasonsList(info.reasons)}` : ''}</div></div>
+   <div class="row" style="margin:.8rem 0">${actions}${l.agreement ? `<button onclick="showAgreement('${l.id}')">View agreement</button>` : ''}</div><div id="ag"></div>
+   ${l.flags && l.flags.length ? `<div class="note warn small" style="margin:.5rem 0">Compliance flags on this loan: ${l.flags.map((f) => `${esc(f.rule)} — ${esc(f.detail)}`).join('; ')}</div>` : ''}
+   ${l.allocations.length ? `<h2 style="margin-top:1rem">${isL ? 'Your slice' : 'Funding'}</h2><table>${l.allocations.map((a) => `<tr><td>${esc(a.label || a.lenderId)}</td><td class="n">${inr(a.amountPaise)}</td><td class="n">${((a.amountPaise * 100) / l.amountPaise).toFixed(2)}%</td>${isL ? `<td class="n small mut">principal back ${inr(a.principalReturnedPaise)} · interest ${inr(a.interestReceivedPaise)}</td>` : ''}</tr>`).join('')}</table>` : ''}
+   ${l.loss ? `<div class="note warn" style="margin:.6rem 0">Written off: ${inr(l.loss.outstandingPrincipalPaise)} outstanding principal. Lenders bear the loss in proportion to their share.</div>` : ''}
+   ${l.schedule.length ? `<h2 style="margin-top:1rem">Repayment schedule</h2>${scheduleTable(l.schedule)}` : ''}
+   ${l.payouts && l.payouts.length ? `<h2 style="margin-top:1rem">Your payouts</h2><div class="scroll" style="max-height:220px"><table><tr><th>Date</th><th class="n">Interest</th><th class="n">Principal</th><th>Bank UTR</th></tr>${l.payouts.map((p) => `<tr><td>${p.paidOn || 'pending'}</td><td class="n">${inr(p.interestPaise)}</td><td class="n">${inr(p.principalPaise)}</td><td class="mono small">${esc(p.payoutUtr || '')} ${p.t1Breach ? '<span class="pill bad">late</span>' : ''}</td></tr>`).join('')}</table></div>` : ''}
+   ${isA && l.bids && l.bids.length ? `<h2 style="margin-top:1rem">Bids</h2><table><tr><th>Lender</th><th class="n">Amount</th><th class="n">Lowest APR</th><th>Status</th></tr>${l.bids.map((b) => `<tr><td class="mono small">${b.lenderId}</td><td class="n">${inr(b.amountPaise)}</td><td class="n">${pct(b.minAprBps)}</td><td>${b.status}${b.acceptedPaise ? ` (${inr(b.acceptedPaise, 0)})` : ''}</td></tr>`).join('')}</table>` : ''}
+   <h2 style="margin-top:1rem">On-chain audit trail</h2>${timeline(l.history)}</div>`;
+}
+const sign = act((id) => api('POST', `/api/loans/${id}/sign`, { otp: $('#otp').value }), (r) => r.allSigned ? 'All parties signed — agreement hash anchored on the ledger' : 'Signed. Waiting for the other parties');
+const fund = act((id) => api('POST', `/api/loans/${id}/fund`, {}), (r) => 'Paid into escrow · UTR ' + r.utr);
+const consent = act((id) => api('POST', `/api/loans/${id}/consent-partial`, {}), 'Recorded: operator may close with the smaller amount');
+const cancelLoan = act((id) => api('POST', `/api/loans/${id}/cancel`, { reason: 'cancelled by borrower' }), 'Loan cancelled');
+async function showAgreement(id) { const a = await api('GET', `/api/loans/${id}/agreement`); $('#ag').innerHTML = `<pre class="doc">${esc(a.text)}</pre><div class="small mut mono">SHA-256 ${a.hash}${a.onChainHash ? ' · on-chain ' + (a.onChainHash === a.hash ? '✓ match' : '✗ MISMATCH') : ''}</div>`; }
+
+// ------------------------------------------------------------------ lender
+async function lenderView() {
+  const [market, pf, mine] = await Promise.all([api('GET', '/api/market'), api('GET', '/api/portfolio'), api('GET', '/api/loans/mine')]);
+  const t = pf.totals;
+  const tabs = [['market', `Marketplace (${market.length})`], ['port', `My loans (${mine.loans.length})`], ['pay', 'Statement']];
+  S.tab = S.tab || 'market';
+  $('#app').innerHTML = `${demoBar()}<div class="grid g4">
+   <div class="card"><div class="stat">${S.me.balancePaise == null ? '—' : inr(S.me.balancePaise)}<small>bank balance</small></div></div>
+   <div class="card"><div class="stat">${inr(t.lentPaise, 0)}<small>committed to loans</small></div></div>
+   <div class="card"><div class="stat">${inr(t.interestReceivedPaise)}<small>interest earned</small></div></div>
+   <div class="card"><div class="stat" style="color:${t.lossPaise ? 'var(--bad)' : 'inherit'}">${inr(t.lossPaise)}<small>principal lost</small></div></div></div>
+   <div class="tabs">${tabs.map(([k, n]) => `<button class="${S.tab === k ? 'on' : ''}" onclick="S.tab='${k}';render()">${n}</button>`).join('')}</div>
+   <div id="tabbody"></div><div id="detail"></div>`;
+  if (S.tab === 'market') $('#tabbody').innerHTML = market.length ? `<div class="grid g2">${market.map(marketCard).join('')}</div>` : '<div class="card mut">No open listings right now.</div>';
+  if (S.tab === 'port') $('#tabbody').innerHTML = `<div class="card"><h2>My loans &amp; bids</h2>${mine.loans.length ? mine.loans.map((l) => { const a = l.allocations[0]; return `<div class="loan ${S.sel === l.id ? 'sel' : ''}"><div class="row" style="justify-content:space-between"><div class="row">${grade(l.riskGrade)}<strong>${inr(a ? a.amountPaise : l.amountPaise, 0)}</strong><span class="mut">of ${inr(l.amountPaise, 0)} · ${purposeLabel(l.purposeCode)}</span>${pill(l.status)}${l.dpd ? `<span class="pill bad">${l.dpd} DPD</span>` : ''}</div><div class="row"><span class="mono mut small">${l.id}</span><button onclick="S.sel='${l.id}';render()">Open</button></div></div><div class="small mut">${l.clearingAprBps ? `earning ${pct(l.clearingAprBps)}` : 'bidding open'}${a ? ` · principal back ${inr(a.principalReturnedPaise)} · interest ${inr(a.interestReceivedPaise)}` : ''}</div></div>`; }).join('') : '<span class="mut">You have not bid on any loan yet.</span>'}</div>`;
+  if (S.tab === 'pay') $('#tabbody').innerHTML = `<div class="card"><h2>Payouts received</h2><div class="scroll"><table><tr><th>Paid on</th><th>Loan</th><th class="n">Interest</th><th class="n">Principal</th><th>Bank UTR</th></tr>${pf.payouts.slice().reverse().map((p) => `<tr><td>${p.paidOn || '<span class="pill warn">pending</span>'}</td><td class="mono small">${p.loanId}</td><td class="n">${inr(p.interestPaise)}</td><td class="n">${inr(p.principalPaise)}</td><td class="mono small">${esc(p.payoutUtr || '')} ${p.t1Breach ? '<span class="pill bad">late</span>' : ''}</td></tr>`).join('') || '<tr><td class="mut">No payouts yet</td></tr>'}</table></div></div>`;
+  if (S.sel) loanDetail(S.sel);
+}
+function marketCard(m) {
+  const pctF = Math.min(100, Math.round((m.demandPaise / m.amountPaise) * 100));
+  const b = m.borrower || {};
+  return `<div class="card"><div class="row" style="justify-content:space-between"><div class="row">${grade(m.riskGrade)}<div><div class="stat" style="font-size:1.25rem">${inr(m.amountPaise, 0)}</div><div class="mut small">${m.tenureMonths} months · ${purposeLabel(m.purposeCode)}</div></div></div><div class="small mut" style="text-align:right">max APR <strong>${pct(m.maxAprBps)}</strong><br>advice band ${pct(m.suggestedAprBand.lowBps)}–${pct(m.suggestedAprBand.highBps)}</div></div>
+   <p class="small" style="margin:.6rem 0 .3rem"><strong>${esc(b.name || '')}</strong> · ${esc(b.employment || '')} · ${esc(b.incomeBand || '')} · bureau ${b.bureauScore || '—'}</p>${m.reasons ? reasonsList(m.reasons) : ''}
+   <div class="row small" style="justify-content:space-between;margin-top:.6rem"><span>${m.bidCount} bid(s) · ${pctF}% covered</span><span class="mut">closes ${m.biddingClosesOn}</span></div><div class="bar"><i style="width:${pctF}%"></i></div>
+   ${m.myBids.length ? `<div style="margin-top:.6rem">${m.myBids.map((x) => `<div class="row small"><span class="pill ${x.status === 'OPEN' ? '' : 'mut'}">${x.status}</span> your bid ${inr(x.amountPaise, 0)} at ≥ ${pct(x.minAprBps)} ${x.status === 'OPEN' ? `<button onclick="withdraw('${m.id}','${x.id}')">Withdraw</button>` : ''}</div>`).join('')}</div>` : ''}
+   <div class="row" style="margin-top:.7rem;align-items:end"><div style="width:120px"><label>Amount ₹ (≤50,000)</label><input id="ba-${m.id}" type="number" value="25000"></div><div style="width:130px"><label>Lowest APR %</label><input id="br-${m.id}" type="number" step="0.25" value="${(m.suggestedAprBand.lowBps / 100).toFixed(2)}"></div><button class="pri" onclick="bid('${m.id}')">Place bid</button><button onclick="S.sel='${m.id}';render()">Details</button></div>
+   <p class="mut small" style="margin:.4rem 0 0">Bidding is your approval of this borrower. Cheapest bids fill first; all accepted lenders earn one clearing rate ≥ your ask. You can lose all principal.</p></div>`;
+}
+const bid = act((id) => api('POST', '/api/bids', { loanId: id, amountRs: +$('#ba-' + id).value, minAprPct: +$('#br-' + id).value }), 'Bid placed on the ledger');
+const withdraw = act((l, b) => api('DELETE', `/api/bids/${l}/${b}`), 'Bid withdrawn');
+
+// ------------------------------------------------------------------ operator
+async function adminView() {
+  const [o, npa] = await Promise.all([api('GET', '/api/admin/overview'), api('GET', '/api/admin/npa-report')]);
+  const st = o.byStatus;
+  $('#app').innerHTML = `<div class="note">Platform operator console. Matching, signature anchoring and delinquency tracking run here; money never does — see the ${svcLink('bank', 4002, 'bank console')} (money) and ${svcLink('auditor', 4003, 'auditor portal')} (independent verification).</div>
+  <div class="grid g4"><div class="card"><div class="stat">${inr(o.outstandingPrincipalPaise, 0)}<small>outstanding principal</small></div></div><div class="card"><div class="stat" style="color:${o.gnpaPct > 0 ? 'var(--bad)' : 'inherit'}">${o.gnpaPct}%<small>gross NPA</small></div></div>
+   <div class="card"><div class="stat">${(st.LISTED || 0) + (st.FUNDING || 0)}<small>open listings</small></div></div><div class="card"><div class="stat" style="color:${o.t1Flags.length ? 'var(--warn)' : 'inherit'}">${o.t1Flags.length}<small>T+1 breaches recorded</small></div></div></div>
+  ${o.pendingReviews.length ? `<div class="card"><h2>Fraud review queue</h2><table>${o.pendingReviews.map((p) => `<tr><td class="mono">${p.loan_id}</td><td>${inr(p.amount_paise, 0)}</td><td>${grade(p.grade)}</td><td>${p.fraud.map((f) => `<span class="pill bad">${esc(f.rule)}</span> <span class="small mut">${esc(f.detail)}</span>`).join('<br>')}</td><td><button class="pri" onclick="approve('${p.loan_id}')">Approve</button> <button class="dng" onclick="rejectApp('${p.loan_id}')">Reject</button></td></tr>`).join('')}</table></div>` : ''}
+  <div class="card"><h2>All loans</h2><div class="scroll"><table><tr><th>Loan</th><th>Status</th><th class="n">Amount</th><th class="n">APR</th><th class="n">Lenders</th><th>Grade</th><th class="n">DPD</th><th></th></tr>${o.loans.slice().reverse().map((l) => `<tr><td class="mono small">${l.id}</td><td>${pill(l.status)}</td><td class="n">${inr(l.amountPaise, 0)}</td><td class="n">${l.aprBps ? pct(l.aprBps) : '—'}</td><td class="n">${l.lenders}</td><td>${grade(l.grade)}</td><td class="n">${l.dpd || ''}</td>
+    <td class="row">${['LISTED', 'FUNDING'].includes(l.status) ? `<button class="pri" onclick="match('${l.id}',false)">Close bidding &amp; match</button>${l.partialConsent ? `<button onclick="match('${l.id}',true)">Match smaller loan</button>` : ''}` : ''}${l.status === 'NPA' ? `<button class="dng" onclick="writeOff('${l.id}')">Write off</button>` : ''}<button onclick="S.sel='${l.id}';render()">Open</button></td></tr>`).join('')}</table></div></div>
+  <div class="grid g2"><div class="card"><h2>NPA &amp; recovery report (monthly RBI-style disclosure)</h2>${npa.rows.length ? `<table><tr><th>Loan</th><th>Status</th><th class="n">DPD</th><th class="n">Outstanding</th><th class="n">Lender loss</th></tr>${npa.rows.map((r) => `<tr><td class="mono small">${r.loanId}</td><td>${pill(r.status)}</td><td class="n">${r.dpd}</td><td class="n">${inr(r.outstandingPrincipalPaise, 0)}</td><td class="n">${inr(r.lenderLossPaise, 0)}</td></tr>`).join('')}</table>` : '<span class="mut">No NPAs.</span>'}</div>
+   <div class="card"><h2>Credit bureau reporting log</h2>${npa.bureauReports.length ? `<table>${npa.bureauReports.map((b) => `<tr><td class="mono small">${b.loan_id}</td><td>${esc(b.kind)}</td><td>${b.as_of}</td><td class="mut small">${esc(b.detail)}</td></tr>`).join('')}</table>` : '<span class="mut">Nothing reported yet.</span>'}</div></div><div id="detail"></div>`;
+  if (S.sel) loanDetail(S.sel);
+}
+const match = act((id, partial) => api('POST', `/api/admin/loans/${id}/match`, { allowPartial: partial }), (r) => r.matched ? `Matched at ${pct(r.clearingAprBps)} · EMI ${inr(r.emiPaise)}` : `Not matched: ${r.reason} (shortfall ${inr(r.shortfallPaise || 0, 0)}). Borrower can accept a smaller loan or cancel.`);
+const writeOff = act((id) => api('POST', `/api/admin/loans/${id}/write-off`, { reason: 'collections exhausted' }), 'Written off; loss allocated to lenders');
+const approve = act((id) => api('POST', `/api/admin/applications/${id}/approve`, {}), 'Approved and listed');
+const rejectApp = act((id) => api('POST', `/api/admin/applications/${id}/reject`, {}), 'Rejected');
+
+// ------------------------------------------------------------------ shell
+async function render() {
+  if (!S.me) return;
+  try { S.me = await api('GET', '/api/me'); } catch { return; }
+  $('#sim').textContent = 'bank date ' + S.me.simDate;
+  $('#who').innerHTML = `<strong>${esc(S.me.name || 'Operator')}</strong> <span class="pill mut">${S.me.role}</span> <span class="mono mut small">${esc(S.me.participantId || '')}</span>`;
+  const focus = document.activeElement && document.activeElement.id;
+  const typing = focus && /^(ln-|ba-|br-|otp)/.test(focus);
+  if (typing) return; // don't clobber a form the user is filling in
+  try { await ({ BORROWER: borrowerView, LENDER: lenderView, ADMIN: adminView })[S.me.role](); } catch (e) { toast(e.message, true); }
+}
+async function boot() {
+  S.cfg = await fetch('/api/config').then((r) => r.json());
+  if (!S.token) { $('#logout').classList.add('hide'); $('#who').textContent = ''; $('#sim').textContent = ''; return authView(); }
+  try { S.me = await api('GET', '/api/me'); } catch { return authView(); }
+  $('#logout').classList.remove('hide');
+  await render(); clearInterval(S.timer); S.timer = setInterval(render, 5000);
+}
+boot();
+</script></body></html>

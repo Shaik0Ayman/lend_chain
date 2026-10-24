@@ -1,0 +1,11 @@
+[
+  {
+    "name": "platformTrusteeBank",
+    "policy": "OR('PlatformMSP.member', 'TrusteeMSP.member')",
+    "requiredPeerCount": 0,
+    "maxPeerCount": 1,
+    "blockToLive": 0,
+    "memberOnlyRead": true,
+    "memberOnlyWrite": true
+  }
+]

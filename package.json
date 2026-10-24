@@ -1,0 +1,21 @@
+{
+  "name": "lendchain",
+  "version": "1.0.0",
+  "description": "LendChain - P2P lending on Hyperledger Fabric (platform backend, mock trustee bank, auditor portal)",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "test:cc": "cd chaincode/lendchain && npm test",
+    "platform": "node services/platform/server.js",
+    "bank": "node services/bank/server.js",
+    "auditor": "node services/auditor/server.js",
+    "e2e": "node scripts/e2e.js",
+    "bench": "node scripts/bench.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@hyperledger/fabric-gateway": "^1.7.0",
+    "@hyperledger/fabric-protos": "^0.3.0",
+    "express": "^4.21.0"
+  }
+}

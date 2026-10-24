@@ -1,0 +1,108 @@
+# Channel "lendchain": Platform + Trustee Bank + Auditor, Raft ordering (3 nodes).
+# The trustee bank's peer must endorse anything that asserts money moved (see chaincode policy).
+# __CRYPTO__ is substituted with the absolute crypto directory by network.sh.
+Organizations:
+  - &OrdererOrg
+    Name: OrdererOrg
+    ID: OrdererMSP
+    MSPDir: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('OrdererMSP.member')" }
+      Writers: { Type: Signature, Rule: "OR('OrdererMSP.member')" }
+      Admins: { Type: Signature, Rule: "OR('OrdererMSP.admin')" }
+    OrdererEndpoints: [localhost:7050, localhost:7150, localhost:7250]
+
+  - &Platform
+    Name: PlatformMSP
+    ID: PlatformMSP
+    MSPDir: __CRYPTO__/peerOrganizations/platform.lendchain.local/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('PlatformMSP.admin','PlatformMSP.peer','PlatformMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('PlatformMSP.admin','PlatformMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('PlatformMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('PlatformMSP.peer')" }
+    AnchorPeers:
+      - { Host: localhost, Port: 7051 }
+
+  - &Trustee
+    Name: TrusteeMSP
+    ID: TrusteeMSP
+    MSPDir: __CRYPTO__/peerOrganizations/trustee.lendchain.local/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('TrusteeMSP.admin','TrusteeMSP.peer','TrusteeMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('TrusteeMSP.admin','TrusteeMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('TrusteeMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('TrusteeMSP.peer')" }
+    AnchorPeers:
+      - { Host: localhost, Port: 8051 }
+
+  - &Auditor
+    Name: AuditorMSP
+    ID: AuditorMSP
+    MSPDir: __CRYPTO__/peerOrganizations/auditor.lendchain.local/msp
+    Policies:
+      Readers: { Type: Signature, Rule: "OR('AuditorMSP.admin','AuditorMSP.peer','AuditorMSP.client')" }
+      Writers: { Type: Signature, Rule: "OR('AuditorMSP.admin','AuditorMSP.client')" }
+      Admins: { Type: Signature, Rule: "OR('AuditorMSP.admin')" }
+      Endorsement: { Type: Signature, Rule: "OR('AuditorMSP.peer')" }
+    AnchorPeers:
+      - { Host: localhost, Port: 9051 }
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+    LifecycleEndorsement: { Type: ImplicitMeta, Rule: "MAJORITY Endorsement" }
+    Endorsement: { Type: ImplicitMeta, Rule: "MAJORITY Endorsement" }
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  OrdererType: etcdraft
+  Addresses: [localhost:7050, localhost:7150, localhost:7250]
+  EtcdRaft:
+    Consenters:
+      - { Host: localhost, Port: 7050, ClientTLSCert: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/orderers/orderer1.orderer.lendchain.local/tls/server.crt, ServerTLSCert: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/orderers/orderer1.orderer.lendchain.local/tls/server.crt }
+      - { Host: localhost, Port: 7150, ClientTLSCert: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/orderers/orderer2.orderer.lendchain.local/tls/server.crt, ServerTLSCert: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/orderers/orderer2.orderer.lendchain.local/tls/server.crt }
+      - { Host: localhost, Port: 7250, ClientTLSCert: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/orderers/orderer3.orderer.lendchain.local/tls/server.crt, ServerTLSCert: __CRYPTO__/ordererOrganizations/orderer.lendchain.local/orderers/orderer3.orderer.lendchain.local/tls/server.crt }
+  BatchTimeout: 500ms
+  BatchSize:
+    MaxMessageCount: 50
+    AbsoluteMaxBytes: 10 MB
+    PreferredMaxBytes: 2 MB
+  Organizations:
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+    BlockValidation: { Type: ImplicitMeta, Rule: "ANY Writers" }
+  Capabilities:
+    <<: *OrdererCapabilities
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers: { Type: ImplicitMeta, Rule: "ANY Readers" }
+    Writers: { Type: ImplicitMeta, Rule: "ANY Writers" }
+    Admins: { Type: ImplicitMeta, Rule: "MAJORITY Admins" }
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  LendChainChannel:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations: [*OrdererOrg]
+    Application:
+      <<: *ApplicationDefaults
+      Organizations: [*Platform, *Trustee, *Auditor]

@@ -1,0 +1,27 @@
+# Identities for the LendChain consortium. Generated with cryptogen (dev/prototype only: in
+# production each organisation runs its own Fabric CA or HSM-backed PKI and keys never leave it).
+OrdererOrgs:
+  - Name: Orderer
+    Domain: orderer.lendchain.local
+    EnableNodeOUs: true
+    Specs:
+      - { Hostname: orderer1, SANS: [localhost, 127.0.0.1] }
+      - { Hostname: orderer2, SANS: [localhost, 127.0.0.1] }
+      - { Hostname: orderer3, SANS: [localhost, 127.0.0.1] }
+
+PeerOrgs:
+  - Name: Platform
+    Domain: platform.lendchain.local
+    EnableNodeOUs: true
+    Template: { Count: 1, SANS: [localhost, 127.0.0.1] }
+    Users: { Count: 1 }
+  - Name: Trustee
+    Domain: trustee.lendchain.local
+    EnableNodeOUs: true
+    Template: { Count: 1, SANS: [localhost, 127.0.0.1] }
+    Users: { Count: 1 }
+  - Name: Auditor
+    Domain: auditor.lendchain.local
+    EnableNodeOUs: true
+    Template: { Count: 1, SANS: [localhost, 127.0.0.1] }
+    Users: { Count: 1 }
