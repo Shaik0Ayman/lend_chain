@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LendChain Auditor Portal</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/shared/lc.css"></head>
+<body>
+<header class="top"><h1>Auditor Portal <small>read-only · runs on the Auditor org’s own peer &amp; ledger copy</small></h1><div class="row"><button class="pri" onclick="refresh()">Re-verify now</button></div></header>
+<main>
+  <div class="note">Nothing here is taken on trust from the platform. The auditor peer holds its own copy of the ledger; every figure is re-derived from raw on-chain records, and the trustee bank’s statement is reconciled against on-chain UTRs. The chaincode rejects all writes from this identity.</div>
+  <div class="grid g4" id="kpi"></div>
+  <div class="grid g2"><div class="card"><h2>Bank ⇄ ledger reconciliation</h2><div id="rec"></div></div><div class="card"><h2>Privacy check</h2><div class="small mut">Pick any participant: the auditor cannot read the private bank-account reference, only its hash.</div><div class="row" style="margin:.5rem 0"><select id="pp" style="flex:1"></select><button onclick="pdc()">Test</button></div><div id="pdc"></div></div></div>
+  <div class="card"><h2>Loans — invariant verification</h2><div class="scroll"><table id="loans"></table></div></div>
+  <div id="detail"></div>
+  <div class="card"><h2>Live chaincode events</h2><div class="scroll"><table id="ev"></table></div></div>
+</main>
+<script src="/shared/lc.js"></script>
+<script>
+let KEY = store('audKey') || prompt('Auditor key (demo default: auditor-demo)') || 'auditor-demo'; store('audKey', KEY);
+const api = async (p) => { const r = await fetch(p, { headers: { 'x-auditor-key': KEY } }); const j = await r.json(); if (!r.ok) { if (r.status === 401) store('audKey', null); throw new Error(j.error); } return j; };
+async function refresh() {
+  try {
+    const [loans, ver, rec, ev] = await Promise.all([api('/api/loans'), api('/api/verify-all'), api('/api/reconcile'), api('/api/events')]);
+    const vm = Object.fromEntries(ver.map((v) => [v.loanId, v]));
+    const bad = ver.filter((v) => !v.ok).length;
+    $('#kpi').innerHTML = [[loans.length, 'loans on ledger'], [ver.length - bad + ' / ' + ver.length, 'pass all invariants', bad ? 'var(--bad)' : 'var(--ok)'], [loans.reduce((s, l) => s + l.flags, 0), 'T+1 breaches', 'inherit'], [rec.ok ? '✓' : '✗', 'bank reconciliation', rec.ok ? 'var(--ok)' : 'var(--bad)']].map(([v, k, c]) => `<div class="card"><div class="stat" style="color:${c || 'inherit'}">${v}<small>${k}</small></div></div>`).join('');
+    $('#rec').innerHTML = `<div class="row"><span class="pill ${rec.ok ? 'ok' : 'bad'}">${rec.ok ? 'RECONCILED' : 'ISSUES'}</span><span class="small mut">${rec.matched} of ${rec.bankTransactions} bank transfers match an on-chain UTR · bank date ${rec.bankDate}</span></div>
+      <table style="margin-top:.5rem"><tr><th>Escrow account</th><th class="n">Bank</th><th class="n">Implied by ledger</th><th></th></tr>${rec.balances.map((b) => `<tr><td class="mono small">${b.account}</td><td class="n">${inr(b.bankPaise)}</td><td class="n">${inr(b.chainImpliedPaise)}</td><td>${b.ok ? '<span class="pill ok">agree</span>' : '<span class="pill bad">differ</span>'}</td></tr>`).join('')}</table>
+      ${rec.issues.length ? `<table style="margin-top:.5rem">${rec.issues.slice(0, 12).map((i) => `<tr><td><span class="pill bad">${i.type}</span></td><td class="mono small">${esc(i.utr)}</td><td class="small">${esc(i.detail)}</td></tr>`).join('')}</table>` : ''}`;
+    $('#loans').innerHTML = '<tr><th>Loan</th><th>Status</th><th class="n">Amount</th><th class="n">APR</th><th class="n">Lenders</th><th class="n">DPD</th><th>Invariants</th><th>Agreement hash</th><th></th></tr>' + loans.slice().reverse().map((l) => { const v = vm[l.id]; return `<tr><td class="mono small">${l.id}</td><td>${pill(l.status)}</td><td class="n">${inr(l.amountPaise, 0)}</td><td class="n">${l.aprBps ? pct(l.aprBps) : '—'}</td><td class="n">${l.lenders}</td><td class="n">${l.dpd || ''}</td><td>${v ? (v.ok ? `<span class="pill ok">✓ ${v.checks} checks</span>` : `<span class="pill bad" title="${esc(v.failed.map((f) => f.name).join('; '))}">✗ ${v.failed.length} failed</span>`) : ''}${l.flags ? ' <span class="pill warn">T+1</span>' : ''}</td><td class="mono small">${l.agreementHash ? l.agreementHash.slice(0, 12) + '…' : ''}</td><td><button onclick="open_('${l.id}')">Inspect</button></td></tr>`; }).join('');
+    $('#ev').innerHTML = '<tr><th class="n">Block</th><th>Event</th><th>Payload</th><th>Tx</th></tr>' + ev.map((e) => `<tr><td class="n">${e.block}</td><td>${esc(e.name)}</td><td class="mono small">${esc(e.payload)}</td><td class="mono small">${e.txId.slice(0, 10)}…</td></tr>`).join('');
+    if (!$('#pp').options.length) { /* participants dropdown filled lazily from loans */ const ids = [...new Set(loans.map((l) => l.borrowerId))]; $('#pp').innerHTML = ids.map((i) => `<option>${i}</option>`).join(''); }
+  } catch (e) { toast(e.message, 1); }
+}
+async function open_(id) {
+  const d = await api('/api/loans/' + id);
+  $('#detail').innerHTML = `<div class="card"><h2>Loan ${id} — verification detail</h2><table>${d.verify.checks.map((c) => `<tr><td>${c.ok ? '<span class="pill ok">✓</span>' : '<span class="pill bad">✗</span>'}</td><td>${esc(c.name)}</td><td class="mono small mut">${esc(c.detail)}</td></tr>`).join('')}</table>
+    <h2 style="margin-top:1rem">Record history (every committed version)</h2><table><tr><th>Time</th><th>Status</th><th>Tx</th></tr>${d.history.map((h) => `<tr><td class="small">${h.timestamp || ''}</td><td>${pill(h.status)}</td><td class="mono small">${h.txId}</td></tr>`).join('')}</table>
+    ${d.loan.flags.length ? `<h2 style="margin-top:1rem">Compliance flags</h2><table>${d.loan.flags.map((f) => `<tr><td><span class="pill warn">${esc(f.rule)}</span></td><td class="small">${esc(f.detail)}</td><td class="mono small">${esc(f.utr || '')}</td></tr>`).join('')}</table>` : ''}</div>`;
+  $('#detail').scrollIntoView({ behavior: 'smooth' });
+}
+async function pdc() { const r = await api('/api/pdc-hash/' + $('#pp').value); $('#pdc').innerHTML = `<dl class="kv"><dt>Read private reference</dt><dd>${esc(r.privateRead)}</dd><dt>Public hash on ledger</dt><dd class="mono small">${r.publicHash ? r.publicHash.slice(0, 20) + '…' : '(none)'}</dd></dl>`; }
+refresh(); setInterval(refresh, 8000);
+</script></body></html>

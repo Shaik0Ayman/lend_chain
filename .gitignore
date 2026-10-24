@@ -1,0 +1,10 @@
+# downloaded at first start (Fabric 2.5 release binaries) or generated at runtime
+network/bin/
+network/config/
+network/builders/
+network/runtime/
+data/
+node_modules/
+*.log
+.env
+.lendchain.env

@@ -1,0 +1,9 @@
+# Caddy obtains and renews a free Let's Encrypt certificate automatically.
+# Replace the hostname with your own (e.g. a free name from duckdns.org pointing at this server's public IP).
+lendchain.example.duckdns.org {
+	encode gzip
+	# the bank-to-platform clock hook is for this machine only
+	@internal path /internal/*
+	respond @internal 404
+	reverse_proxy 127.0.0.1:4001
+}

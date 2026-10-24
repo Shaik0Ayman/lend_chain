@@ -1,0 +1,16 @@
+{
+  "name": "lendchain-cc",
+  "version": "1.0.0",
+  "description": "LendChain chaincode: participant registry, loan state machine, bid & match, repayment ledger, compliance guard",
+  "main": "src/index.js",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "fabric-chaincode-node start",
+    "start:server": "fabric-chaincode-node server --chaincode-address=$CHAINCODE_SERVER_ADDRESS --chaincode-id=$CHAINCODE_ID"
+  },
+  "dependencies": {
+    "fabric-contract-api": "2.5.8",
+    "fabric-shim": "2.5.8"
+  }
+}
